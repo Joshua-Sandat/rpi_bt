@@ -301,19 +301,31 @@ p2p_disabled=0
     
     def extract_wifi_credentials_via_wifi_direct(self, device_name: str, device_address: str) -> bool:
         """Extract WiFi credentials using WiFi Direct protocol."""
+        start_time = time.time()
+        timeout_seconds = 120  # 2 minutes total timeout
+        
         try:
             logger.info(f"Starting WiFi Direct credential extraction from {device_name}...")
+            logger.info(f"Total timeout: {timeout_seconds} seconds")
             
             # Step 1: Discover WiFi Direct devices
-            logger.info("Discovering WiFi Direct devices...")
+            logger.info("Step 1: Discovering WiFi Direct devices...")
             try:
                 subprocess.run(['sudo', 'wpa_cli', 'p2p_find'], check=True, timeout=10)
+                logger.info("WiFi Direct discovery started, waiting 10 seconds...")
                 time.sleep(10)  # Wait for discovery
+                
+                # Check timeout
+                if time.time() - start_time > timeout_seconds:
+                    logger.warning("Timeout reached during discovery")
+                    return False
+                    
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
                 logger.warning("WiFi Direct discovery failed, trying Bluetooth-only method")
                 return self.extract_wifi_credentials_via_bluetooth_only(device_name, device_address)
             
             # Step 2: Get list of discovered devices
+            logger.info("Step 2: Getting list of discovered devices...")
             result = subprocess.run(['sudo', 'wpa_cli', 'p2p_peers'], 
                                   capture_output=True, text=True, check=True)
             
@@ -321,24 +333,82 @@ p2p_disabled=0
                 logger.info("WiFi Direct devices discovered:")
                 logger.info(result.stdout)
                 
-                # Step 3: Try to connect to the phone via WiFi Direct
-                if self.connect_via_wifi_direct(device_name, device_address):
-                    return True
+                # Parse discovered devices
+                discovered_devices = self.parse_discovered_devices(result.stdout)
+                logger.info(f"Found {len(discovered_devices)} WiFi Direct devices")
+                
+                # Step 3: Try to connect to each discovered device
+                for i, device_info in enumerate(discovered_devices):
+                    logger.info(f"Step 3: Attempting connection to {device_info['name']} ({device_info['address']})... ({i+1}/{len(discovered_devices)})")
+                    
+                    # Check timeout before each connection attempt
+                    if time.time() - start_time > timeout_seconds:
+                        logger.warning("Timeout reached during connection attempts")
+                        return False
+                    
+                    if self.connect_via_wifi_direct(device_info['name'], device_info['address']):
+                        logger.info("WiFi Direct connection successful!")
+                        return True
+                    else:
+                        logger.info(f"Connection to {device_info['name']} failed, trying next device...")
+                        
+                        # Debug current state after failed connection
+                        logger.info("Debugging current state after failed connection...")
+                        self.debug_wifi_direct_state()
             else:
                 logger.info("No WiFi Direct devices discovered")
             
             # Step 4: Try alternative WiFi Direct methods
+            logger.info("Step 4: Trying alternative WiFi Direct methods...")
+            if time.time() - start_time > timeout_seconds:
+                logger.warning("Timeout reached before alternative methods")
+                return False
+                
             if self.try_alternative_wifi_direct_methods(device_name, device_address):
                 return True
             
             # Step 5: Fallback to Bluetooth-only method
-            logger.info("WiFi Direct methods failed, trying Bluetooth-only extraction...")
+            logger.info("Step 5: WiFi Direct methods failed, trying Bluetooth-only extraction...")
             return self.extract_wifi_credentials_via_bluetooth_only(device_name, device_address)
             
         except Exception as e:
             logger.error(f"Error in WiFi Direct credential extraction: {e}")
             logger.info("Falling back to Bluetooth-only method...")
             return self.extract_wifi_credentials_via_bluetooth_only(device_name, device_address)
+        finally:
+            elapsed_time = time.time() - start_time
+            logger.info(f"WiFi Direct extraction completed in {elapsed_time:.1f} seconds")
+    
+    def parse_discovered_devices(self, peers_output: str) -> list:
+        """Parse the output of p2p_peers to extract device information."""
+        devices = []
+        try:
+            lines = peers_output.strip().split('\n')
+            current_device = {}
+            
+            for line in lines:
+                line = line.strip()
+                if line.startswith('dev_addr='):
+                    if current_device:
+                        devices.append(current_device)
+                    current_device = {'address': line.split('=', 1)[1]}
+                elif line.startswith('dev_name='):
+                    current_device['name'] = line.split('=', 1)[1]
+                elif line.startswith('p2p_dev_addr='):
+                    current_device['p2p_address'] = line.split('=', 1)[1]
+            
+            # Add the last device
+            if current_device:
+                devices.append(current_device)
+            
+            logger.info(f"Parsed {len(devices)} devices from discovery output")
+            for device in devices:
+                logger.info(f"  - {device.get('name', 'Unknown')} ({device.get('address', 'Unknown')})")
+                
+        except Exception as e:
+            logger.error(f"Error parsing discovered devices: {e}")
+        
+        return devices
     
     def extract_wifi_credentials_via_bluetooth_only(self, device_name: str, device_address: str) -> bool:
         """Extract WiFi credentials using Bluetooth-only methods."""
@@ -394,23 +464,34 @@ p2p_disabled=0
     def connect_via_wifi_direct(self, device_name: str, device_address: str) -> bool:
         """Attempt to connect to phone via WiFi Direct."""
         try:
-            logger.info("Attempting WiFi Direct connection...")
+            logger.info(f"Attempting WiFi Direct connection to {device_name} ({device_address})...")
             
             # Try to connect using device address
+            logger.info("Initiating P2P connection...")
             result = subprocess.run(['sudo', 'wpa_cli', 'p2p_connect', device_address, 'pbc'], 
                                   capture_output=True, text=True, check=True)
             
             if result.returncode == 0:
                 logger.info("WiFi Direct connection initiated!")
+                logger.info(f"Connection output: {result.stdout}")
                 
-                # Wait for connection
-                time.sleep(15)
+                # Wait for connection with progress updates
+                logger.info("Waiting for connection to establish...")
+                for i in range(30):  # Wait up to 30 seconds
+                    time.sleep(1)
+                    if i % 5 == 0:  # Progress update every 5 seconds
+                        logger.info(f"Connection attempt in progress... ({i+1}/30 seconds)")
+                    
+                    # Check connection status
+                    if self.check_wifi_direct_connection():
+                        logger.info("WiFi Direct connection established!")
+                        return self.extract_credentials_from_wifi_direct()
                 
-                # Check connection status
-                if self.check_wifi_direct_connection():
-                    return self.extract_credentials_from_wifi_direct()
-            
-            return False
+                logger.warning("Connection attempt timed out after 30 seconds")
+                return False
+            else:
+                logger.error(f"Failed to initiate connection: {result.stderr}")
+                return False
             
         except Exception as e:
             logger.error(f"Error connecting via WiFi Direct: {e}")
@@ -467,15 +548,83 @@ p2p_disabled=0
             
             if result.returncode == 0:
                 status = result.stdout
+                logger.debug(f"Current wpa_supplicant status: {status}")
+                
                 if 'p2p_go_mode=1' in status or 'p2p_client_mode=1' in status:
                     logger.info("WiFi Direct connection established!")
                     return True
+                elif 'p2p' in status.lower():
+                    logger.info("WiFi Direct is active but not fully connected")
+                    logger.info(f"P2P status: {status}")
+                    return False
+                else:
+                    logger.debug("No WiFi Direct activity detected")
+                    return False
             
             return False
             
         except Exception as e:
             logger.error(f"Error checking WiFi Direct connection: {e}")
             return False
+    
+    def get_current_wifi_direct_status(self) -> dict:
+        """Get comprehensive WiFi Direct status information."""
+        status_info = {}
+        
+        try:
+            # Check wpa_supplicant status
+            result = subprocess.run(['sudo', 'wpa_cli', 'status'], 
+                                  capture_output=True, text=True, check=True)
+            if result.returncode == 0:
+                status_info['wpa_status'] = result.stdout
+            
+            # Check P2P peers
+            result = subprocess.run(['sudo', 'wpa_cli', 'p2p_peers'], 
+                                  capture_output=True, text=True, check=True)
+            if result.returncode == 0:
+                status_info['p2p_peers'] = result.stdout
+            
+            # Check P2P groups
+            result = subprocess.run(['sudo', 'wpa_cli', 'p2p_group_info'], 
+                                  capture_output=True, text=True, check=True)
+            if result.returncode == 0:
+                status_info['p2p_groups'] = result.stdout
+            
+            # Check network interfaces
+            result = subprocess.run(['ip', 'addr', 'show'], 
+                                  capture_output=True, text=True, check=True)
+            if result.returncode == 0:
+                status_info['network_interfaces'] = result.stdout
+                
+        except Exception as e:
+            logger.error(f"Error getting WiFi Direct status: {e}")
+        
+        return status_info
+    
+    def debug_wifi_direct_state(self):
+        """Debug the current WiFi Direct state."""
+        logger.info("🔍 Debugging WiFi Direct state...")
+        
+        status_info = self.get_current_wifi_direct_status()
+        
+        logger.info("📊 Current Status:")
+        if 'wpa_status' in status_info:
+            logger.info("WPA Status:")
+            logger.info(status_info['wpa_status'])
+        
+        if 'p2p_peers' in status_info:
+            logger.info("P2P Peers:")
+            logger.info(status_info['p2p_peers'])
+        
+        if 'p2p_groups' in status_info:
+            logger.info("P2P Groups:")
+            logger.info(status_info['p2p_groups'])
+        
+        if 'network_interfaces' in status_info:
+            logger.info("Network Interfaces:")
+            logger.info(status_info['network_interfaces'])
+        
+        logger.info("🔍 Debug complete")
     
     def check_for_network_responses(self) -> bool:
         """Check for network information responses."""
