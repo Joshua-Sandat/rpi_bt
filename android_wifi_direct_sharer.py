@@ -128,11 +128,43 @@ AutoEnable = true
     def setup_wifi_direct(self) -> bool:
         """Setup WiFi Direct optimized for Android devices."""
         try:
-            # Stop existing WiFi services
+            # First check if WiFi interface is available
+            if not self.check_wifi_interface_status():
+                logger.error("WiFi interface not available for WiFi Direct")
+                return False
+            
+            logger.info("Cleaning up existing WiFi interfaces...")
+            
+            # Kill any existing wpa_supplicant processes
+            subprocess.run(['sudo', 'killall', 'wpa_supplicant'], 
+                         capture_output=True, check=False)
+            subprocess.run(['sudo', 'killall', 'hostapd'], 
+                         capture_output=True, check=False)
+            
+            # Wait for processes to fully stop
+            time.sleep(3)
+            
+            # Stop system services
             subprocess.run(['sudo', 'systemctl', 'stop', 'wpa_supplicant'], 
-                         capture_output=True)
+                         capture_output=True, check=False)
             subprocess.run(['sudo', 'systemctl', 'stop', 'networking'], 
-                         capture_output=True)
+                         capture_output=True, check=False)
+            
+            # Bring down wlan0 interface
+            subprocess.run(['sudo', 'ip', 'link', 'set', 'wlan0', 'down'], 
+                         capture_output=True, check=False)
+            
+            # Wait for interface to be fully down
+            time.sleep(2)
+            
+            # Bring up wlan0 interface
+            subprocess.run(['sudo', 'ip', 'link', 'set', 'wlan0', 'up'], 
+                         capture_output=True, check=False)
+            
+            # Wait for interface to be ready
+            time.sleep(2)
+            
+            logger.info("WiFi interface cleanup completed")
             
             # Create minimal, compatible wpa_supplicant configuration
             wpa_config = f"""
@@ -160,11 +192,29 @@ p2p_disabled=0
             
             # Test if WiFi Direct is working
             try:
-                subprocess.run(['sudo', 'wpa_cli', 'p2p_find'], check=True, timeout=10)
-                logger.info("Android-optimized WiFi Direct configured successfully")
-                return True
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-                logger.warning(f"WiFi Direct setup failed: {e}, using fallback method")
+                result = subprocess.run(['sudo', 'wpa_cli', 'p2p_find'], 
+                                      capture_output=True, text=True, check=False, timeout=10)
+                
+                if result.returncode == 0:
+                    # Additional verification - check if P2P interface was actually created
+                    time.sleep(2)
+                    p2p_check = subprocess.run(['sudo', 'wpa_cli', 'p2p_peers'], 
+                                             capture_output=True, text=True, check=False, timeout=5)
+                    
+                    if p2p_check.returncode == 0:
+                        logger.info("Android-optimized WiFi Direct configured successfully")
+                        return True
+                    else:
+                        logger.warning("WiFi Direct test passed but P2P interface not working")
+                        logger.warning(f"P2P check error: {p2p_check.stderr}")
+                        return self.setup_wifi_direct_fallback()
+                else:
+                    logger.warning(f"WiFi Direct test failed with return code {result.returncode}")
+                    logger.warning(f"Error output: {result.stderr}")
+                    return self.setup_wifi_direct_fallback()
+                    
+            except subprocess.TimeoutExpired:
+                logger.warning("WiFi Direct test timed out, using fallback method")
                 return self.setup_wifi_direct_fallback()
             
         except subprocess.CalledProcessError as e:
@@ -823,6 +873,41 @@ network={{
             logger.error(f"Error getting Android WiFi Direct status: {e}")
         
         logger.info("🔍 Android WiFi Direct debug complete")
+    
+    def check_wifi_interface_status(self) -> bool:
+        """Check if WiFi interface is available and not busy."""
+        try:
+            # Check if wlan0 exists
+            result = subprocess.run(['ip', 'link', 'show', 'wlan0'], 
+                                  capture_output=True, text=True, check=False)
+            
+            if result.returncode != 0:
+                logger.error("wlan0 interface not found")
+                return False
+            
+            # Check if interface is up
+            if 'UP' not in result.stdout:
+                logger.warning("wlan0 interface is down")
+                return False
+            
+            # Check if interface is busy
+            result = subprocess.run(['iwconfig', 'wlan0'], 
+                                  capture_output=True, text=True, check=False)
+            
+            if result.returncode == 0:
+                if 'ESSID:' in result.stdout and 'Not-Associated' not in result.stdout:
+                    logger.warning("wlan0 is currently connected to a network")
+                    return False
+                elif 'Mode:' in result.stdout and 'Master' in result.stdout:
+                    logger.warning("wlan0 is currently in AP mode")
+                    return False
+            
+            logger.info("WiFi interface status check passed")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error checking WiFi interface status: {e}")
+            return False
     
     def run(self):
         """Main execution flow for Android devices."""
