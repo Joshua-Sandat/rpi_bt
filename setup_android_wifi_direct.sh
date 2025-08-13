@@ -61,26 +61,8 @@ ctrl_interface=/var/run/wpa_supplicant
 ctrl_interface_group=0
 update_config=1
 
-# Android-optimized WiFi Direct configuration
+# Minimal WiFi Direct configuration - compatible with all Pi versions
 p2p_disabled=0
-p2p_go_intent=0
-p2p_go_ht40=1
-p2p_go_vht=1
-
-# Android-specific P2P settings
-p2p_listen_reg_class=81
-p2p_listen_channel=1
-p2p_oper_reg_class=81
-p2p_oper_channel=1
-
-# Android WiFi Direct group settings
-p2p_go_max_inactivity=300
-p2p_passphrase_len=8
-p2p_pref_chan=81:1,81:6,81:11
-
-# Android compatibility settings
-p2p_go_intra_bss=1
-p2p_device_name=PiWiFiSetup
 EOF
 
 # Enable and start Bluetooth service

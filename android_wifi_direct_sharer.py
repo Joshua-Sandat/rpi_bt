@@ -63,6 +63,18 @@ class AndroidWiFiDirectSharer:
                        " ".join(missing_packages))
             return False
         
+        # Check if WiFi Direct is supported
+        try:
+            result = subprocess.run(['wpa_cli', 'help'], 
+                                  capture_output=True, text=True, check=False)
+            if 'p2p' not in result.stdout.lower():
+                logger.error("WiFi Direct (P2P) not supported by wpa_cli")
+                logger.error("Your Pi may not support WiFi Direct")
+                return False
+            logger.info("WiFi Direct (P2P) support confirmed")
+        except Exception as e:
+            logger.warning(f"Could not verify WiFi Direct support: {e}")
+        
         return True
     
     def setup_bluetooth(self) -> bool:
@@ -122,32 +134,14 @@ AutoEnable = true
             subprocess.run(['sudo', 'systemctl', 'stop', 'networking'], 
                          capture_output=True)
             
-            # Create Android-optimized wpa_supplicant configuration
+            # Create minimal, compatible wpa_supplicant configuration
             wpa_config = f"""
 ctrl_interface=/var/run/wpa_supplicant
 ctrl_interface_group=0
 update_config=1
 
-# Android-optimized WiFi Direct configuration
+# Minimal WiFi Direct configuration - compatible with all Pi versions
 p2p_disabled=0
-p2p_go_intent=0
-p2p_go_ht40=1
-p2p_go_vht=1
-
-# Android-specific P2P settings
-p2p_listen_reg_class=81
-p2p_listen_channel=1
-p2p_oper_reg_class=81
-p2p_oper_channel=1
-
-# Android WiFi Direct group settings
-p2p_go_max_inactivity=300
-p2p_passphrase_len=8
-p2p_pref_chan=81:1,81:6,81:11
-
-# Android compatibility settings
-p2p_go_intra_bss=1
-p2p_device_name=PiWiFiSetup
 """
             
             with open('/tmp/wpa_supplicant.conf', 'w') as f:
@@ -169,8 +163,8 @@ p2p_device_name=PiWiFiSetup
                 subprocess.run(['sudo', 'wpa_cli', 'p2p_find'], check=True, timeout=10)
                 logger.info("Android-optimized WiFi Direct configured successfully")
                 return True
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-                logger.warning("WiFi Direct setup failed, using fallback method")
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                logger.warning(f"WiFi Direct setup failed: {e}, using fallback method")
                 return self.setup_wifi_direct_fallback()
             
         except subprocess.CalledProcessError as e:
@@ -851,6 +845,8 @@ network={{
             logger.info("Setting up Android-optimized WiFi Direct...")
             if not self.setup_wifi_direct():
                 logger.error("Android WiFi Direct setup failed")
+                logger.error("WiFi Direct is required for credential extraction")
+                logger.error("Please check your Pi's WiFi Direct capabilities")
                 return False
             
             # Setup D-Bus
