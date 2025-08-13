@@ -89,7 +89,7 @@ Wants=bluetooth.service
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/bin/python3 /home/pi/android_wifi_direct_sharer.py
+ExecStart=/usr/bin/python3 /home/gt/rpi_bt/android_wifi_direct_sharer.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -105,8 +105,8 @@ systemctl enable android-wifi-direct-sharer.service
 
 # Set proper permissions
 echo "🔐 Setting proper permissions..."
-chmod +x /home/pi/android_wifi_direct_sharer.py
-chown root:root /home/pi/android_wifi_direct_sharer.py
+chmod +x /home/gt/rpi_bt/android_wifi_direct_sharer.py
+chown root:root /home/gt/rpi_bt/android_wifi_direct_sharer.py
 
 # Create log rotation
 echo "📝 Setting up log rotation..."
