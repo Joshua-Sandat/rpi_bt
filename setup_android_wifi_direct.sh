@@ -81,7 +81,6 @@ p2p_pref_chan=81:1,81:6,81:11
 # Android compatibility settings
 p2p_go_intra_bss=1
 p2p_device_name=PiWiFiSetup
-p2p_device_type=1-0050F204-1
 EOF
 
 # Enable and start Bluetooth service

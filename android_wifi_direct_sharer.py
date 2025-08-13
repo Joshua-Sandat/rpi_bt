@@ -148,7 +148,6 @@ p2p_pref_chan=81:1,81:6,81:11
 # Android compatibility settings
 p2p_go_intra_bss=1
 p2p_device_name=PiWiFiSetup
-p2p_device_type=1-0050F204-1
 """
             
             with open('/tmp/wpa_supplicant.conf', 'w') as f:
@@ -343,18 +342,18 @@ p2p_go_intent=0
                 
                 # Step 3: Try to connect to each discovered Android device
                 for i, device_info in enumerate(discovered_devices):
-                    logger.info(f"Step 3: Attempting connection to Android device {device_info['name']} ({device_info['address']})... ({i+1}/{len(discovered_devices)})")
+                    logger.info(f"Step 3: Attempting connection to Android device {device_info.get('name', 'Unknown')} ({device_info['address']})... ({i+1}/{len(discovered_devices)})")
                     
                     # Check timeout before each connection attempt
                     if time.time() - start_time > timeout_seconds:
                         logger.warning("Timeout reached during connection attempts")
                         return False
                     
-                    if self.connect_to_android_via_wifi_direct(device_info['name'], device_info['address']):
+                    if self.connect_to_android_via_wifi_direct(device_info.get('name', 'Unknown'), device_info['address']):
                         logger.info("Android WiFi Direct connection successful!")
                         return True
                     else:
-                        logger.info(f"Connection to {device_info['name']} failed, trying next device...")
+                        logger.info(f"Connection to {device_info.get('name', 'Unknown')} failed, trying next device...")
                         
                         # Debug current state after failed connection
                         logger.info("Debugging current state after failed connection...")
@@ -391,16 +390,20 @@ p2p_go_intent=0
             for line in lines:
                 line = line.strip()
                 if line.startswith('dev_addr='):
-                    if current_device:
+                    if current_device and 'address' in current_device:
                         devices.append(current_device)
                     current_device = {'address': line.split('=', 1)[1]}
                 elif line.startswith('dev_name='):
                     current_device['name'] = line.split('=', 1)[1]
                 elif line.startswith('p2p_dev_addr='):
                     current_device['p2p_address'] = line.split('=', 1)[1]
+                elif line.startswith('p2p_go_intent='):
+                    current_device['go_intent'] = line.split('=', 1)[1]
+                elif line.startswith('p2p_dev_capab='):
+                    current_device['capabilities'] = line.split('=', 1)[1]
             
-            # Add the last device
-            if current_device:
+            # Add the last device if it has an address
+            if current_device and 'address' in current_device:
                 devices.append(current_device)
             
             logger.info(f"Parsed {len(devices)} Android devices from discovery output")
@@ -409,6 +412,7 @@ p2p_go_intent=0
                 
         except Exception as e:
             logger.error(f"Error parsing Android devices: {e}")
+            logger.error(f"Raw output was: {peers_output}")
         
         return devices
     
@@ -525,12 +529,14 @@ p2p_go_intent=0
         try:
             # Check for service responses
             result = subprocess.run(['sudo', 'wpa_cli', 'p2p_serv_disc_resp'], 
-                                  capture_output=True, text=True, check=True)
+                                  capture_output=True, text=True, check=False)
             
             if result.returncode == 0 and result.stdout.strip():
                 logger.info("Android service discovery responses received:")
                 logger.info(result.stdout)
                 return True
+            elif result.returncode != 0:
+                logger.info(f"Service discovery response check returned {result.returncode}: {result.stderr}")
             
             return False
             
@@ -543,7 +549,7 @@ p2p_go_intent=0
         try:
             # Check group information
             result = subprocess.run(['sudo', 'wpa_cli', 'p2p_group_info'], 
-                                  capture_output=True, text=True, check=True)
+                                  capture_output=True, text=True, check=False)
             
             if result.returncode == 0 and result.stdout.strip():
                 logger.info("Android WiFi Direct group status:")
@@ -553,6 +559,8 @@ p2p_go_intent=0
                 if 'group_id=' in result.stdout:
                     logger.info("Android WiFi Direct group formed successfully!")
                     return True
+            elif result.returncode != 0:
+                logger.info(f"Group status check returned {result.returncode}: {result.stderr}")
             
             return False
             
